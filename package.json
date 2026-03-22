@@ -1,0 +1,11 @@
+{
+  "name": "nexus-wa-otp-bot",
+  "version": "1.0.0",
+  "main": "index.js",
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.5",
+    "libphonenumber-js": "^1.11.1",
+    "node-telegram-bot-api": "^0.65.0",
+    "pino": "^9.0.0"
+  }
+}
