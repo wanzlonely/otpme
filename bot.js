@@ -19,10 +19,10 @@ const CONFIG = {
     adminUsername: 'walzspy',
     groupLink:     'https://t.me/otpspyx',
     groupId:       '-1003887790861',
-    botImage:      'https://files.catbox.moe/kjfe0d.jpg',
+    botImage:      'https://files.catbox.moe/fp5fkl.png',
     dbPath:        './database',
     batchSize:     50,
-    delayPerBatch: 3000,
+    delayPerBatch: 1000,
     maxSessions:   5
 };
 
