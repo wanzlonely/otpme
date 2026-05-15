@@ -1,11 +1,23 @@
 {
-  "name": "nexus-wa-otp-bot",
-  "version": "1.0.0",
-  "main": "index.js",
+  "name": "walzy-intelligence-bot",
+  "version": "3.0.0",
+  "description": "Walzy Telegram Bot Cek Bio WhatsApp Intelligence Checker",
+  "main": "bot.js",
+  "type": "module",
+  "scripts": {
+    "start": "node bot.js",
+    "dev": "node --watch bot.js"
+  },
   "dependencies": {
-    "@whiskeysockets/baileys": "^6.7.5",
+    "@whiskeysockets/baileys": "^6.6.0",
+    "axios": "^1.6.2",
     "libphonenumber-js": "^1.11.1",
-    "node-telegram-bot-api": "^0.65.0",
-    "pino": "^9.0.0"
-  }
+    "pino": "^9.3.2",
+    "telegraf": "^4.16.3",
+    "xlsx": "^0.18.5"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "license": "MIT"
 }
