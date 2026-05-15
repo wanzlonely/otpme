@@ -14,11 +14,11 @@ import XLSX from 'xlsx';
 import { parsePhoneNumberWithError } from 'libphonenumber-js';
 
 const CONFIG = {
-    botToken:      'ISI_BOT_TOKEN_ANDA',
-    ownerId:       '7650101390',
-    adminUsername: 'walzyexploit',
-    groupLink:     'https://t.me/stockwalzyy',
-    groupId:       '-1003675929763',
+    botToken:      '8228167242:AAH8tGPdLUdiNGCG4EYG21s5twEy8M-xfXA',
+    ownerId:       '8062935882',
+    adminUsername: 'walzspy',
+    groupLink:     'https://t.me/otpspyx',
+    groupId:       '-1003887790861',
     botImage:      'https://files.catbox.moe/kjfe0d.jpg',
     dbPath:        './database',
     batchSize:     50,
