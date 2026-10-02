@@ -1,16 +1,17 @@
 {
-"name": "inbox-control-userbot",
-"version": "2.0.0",
-"description": "Telegram Userbot and Control Panel for Vercel",
-"main": "api/index.js",
-"scripts": {
-"start": "node api/index.js"
-},
-"dependencies": {
-"grammy": "^1.21.1",
-"telegram": "^2.22.2"
-},
-"engines": {
-"node": ">=18.0.0"
-}
+  "name": "inbox-control-userbot",
+  "version": "2.5.0",
+  "description": "Enterprise-grade Modern Telegram Inbox Control Userbot & Panel Bot for Vercel",
+  "main": "api/index.js",
+  "scripts": {
+    "start": "node api/index.js"
+  },
+  "dependencies": {
+    "@vercel/kv": "^1.0.1",
+    "grammy": "^1.30.0",
+    "telegram": "^2.26.22"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
 }
