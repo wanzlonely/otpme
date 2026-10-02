@@ -32,6 +32,8 @@ const DEFAULT_CFG = {
   last_undo: []
 };
 
+let cachedClient = null;
+
 async function loadCfg() {
   try {
     const data = await kv.get("userbot_config");
@@ -76,10 +78,15 @@ function spark(vals) {
 }
 
 async function getClient() {
+  if (cachedClient && cachedClient.connected) {
+    return cachedClient;
+  }
   const client = new TelegramClient(new StringSession(TG_SESSION), API_ID, API_HASH, {
-    connectionRetries: 3
+    connectionRetries: 3,
+    useWSS: false
   });
   await client.connect();
+  cachedClient = client;
   return client;
 }
 
@@ -97,15 +104,15 @@ function isMuted(dialog) {
   return until * 1000 > Date.now();
 }
 
-async function pickDialogs(client, cfg) {
-  const dialogs = await client.getDialogs({ limit: 100 });
+async function pickDialogs(client, cfg, limit = 50) {
+  const dialogs = await client.getDialogs({ limit });
   const out = [];
   for (const d of dialogs) {
-    const dId = d.id.toString();
-    const cat = getCategory(d);
-    if (cfg.exclude.includes(dId) || !cfg.categories[cat]) continue;
-    if (cfg.skip_muted && isMuted(d)) continue;
     if (d.unreadCount > 0 || d.unreadMentionsCount > 0) {
+      const dId = d.id.toString();
+      const cat = getCategory(d);
+      if (cfg.exclude.includes(dId) || !cfg.categories[cat]) continue;
+      if (cfg.skip_muted && isMuted(d)) continue;
       out.push(d);
     }
   }
@@ -119,54 +126,51 @@ async function readNow(source) {
   let totalMsgs = 0;
   let totalChatsProcessed = 0;
 
-  try {
-    let hasUnread = true;
-    let maxLoops = 15; // Keamanan agar tidak infinite loop
+  let maxLoops = 10;
+  while (maxLoops > 0) {
+    maxLoops--;
+    const dialogs = await pickDialogs(client, cfg, 50);
+    if (dialogs.length === 0) break;
 
-    while (hasUnread && maxLoops > 0) {
-      maxLoops--;
-      const dialogs = await pickDialogs(client, cfg);
-      if (dialogs.length === 0) {
-        hasUnread = false;
-        break;
-      }
-
-      for (const d of dialogs) {
-        try {
-          await client.markAsRead(d.entity);
-          if (cfg.auto_archive && !d.archived) {
-            await client.invoke(
-              new Api.folders.EditPeerFolders({
-                folderPeers: [
-                  new Api.InputFolderPeer({
-                    peer: d.inputEntity,
-                    folderId: 1
-                  })
-                ]
-              })
-            );
-          }
-          done.push(d.id.toString());
-          totalMsgs += d.unreadCount;
-          totalChatsProcessed++;
-          await new Promise(r => setTimeout(r, 200));
-        } catch (err) {}
-      }
+    const batchSize = 10;
+    for (let i = 0; i < dialogs.length; i += batchSize) {
+      const batch = dialogs.slice(i, i + batchSize);
+      await Promise.allSettled(
+        batch.map(async (d) => {
+          try {
+            await client.markAsRead(d.entity);
+            if (cfg.auto_archive && !d.archived) {
+              await client.invoke(
+                new Api.folders.EditPeerFolders({
+                  folderPeers: [
+                    new Api.InputFolderPeer({
+                      peer: d.inputEntity,
+                      folderId: 1
+                    })
+                  ]
+                })
+              );
+            }
+            done.push(d.id.toString());
+            totalMsgs += d.unreadCount;
+            totalChatsProcessed++;
+          } catch (err) {}
+        })
+      );
+      await new Promise(r => setTimeout(r, 40));
     }
-
-    cfg.last_undo = done;
-    const today = new Date().toISOString().split("T")[0];
-    if (!cfg.stats[today]) cfg.stats[today] = { runs: 0, chats: 0, msgs: 0 };
-    cfg.stats[today].runs += 1;
-    cfg.stats[today].chats += totalChatsProcessed;
-    cfg.stats[today].msgs += totalMsgs;
-
-    await saveCfg(cfg);
-    await appendLog(`READ src=${source} chats=${totalChatsProcessed} msgs=${totalMsgs}`);
-    return { chats: totalChatsProcessed, msgs: totalMsgs };
-  } finally {
-    await client.disconnect();
   }
+
+  cfg.last_undo = done;
+  const today = new Date().toISOString().split("T")[0];
+  if (!cfg.stats[today]) cfg.stats[today] = { runs: 0, chats: 0, msgs: 0 };
+  cfg.stats[today].runs += 1;
+  cfg.stats[today].chats += totalChatsProcessed;
+  cfg.stats[today].msgs += totalMsgs;
+
+  await saveCfg(cfg);
+  await appendLog(`READ src=${source} chats=${totalChatsProcessed} msgs=${totalMsgs}`);
+  return { chats: totalChatsProcessed, msgs: totalMsgs };
 }
 
 async function undoLast() {
@@ -175,27 +179,30 @@ async function undoLast() {
   const client = await getClient();
   let count = 0;
 
-  try {
-    for (const cid of cfg.last_undo) {
-      try {
-        const ent = await client.getInputEntity(cid);
-        await client.invoke(
-          new Api.messages.MarkDialogUnread({
-            peer: new Api.InputDialogPeer({ peer: ent }),
-            unread: true
-          })
-        );
-        count++;
-        await new Promise(r => setTimeout(r, 200));
-      } catch (e) {}
-    }
-    cfg.last_undo = [];
-    await saveCfg(cfg);
-    await appendLog(`UNDO chats=${count}`);
-    return count;
-  } finally {
-    await client.disconnect();
+  const batchSize = 8;
+  for (let i = 0; i < cfg.last_undo.length; i += batchSize) {
+    const batch = cfg.last_undo.slice(i, i + batchSize);
+    await Promise.allSettled(
+      batch.map(async (cid) => {
+        try {
+          const ent = await client.getInputEntity(cid);
+          await client.invoke(
+            new Api.messages.MarkDialogUnread({
+              peer: new Api.InputDialogPeer({ peer: ent }),
+              unread: true
+            })
+          );
+          count++;
+        } catch (e) {}
+      })
+    );
+    await new Promise(r => setTimeout(r, 40));
   }
+
+  cfg.last_undo = [];
+  await saveCfg(cfg);
+  await appendLog(`UNDO chats=${count}`);
+  return count;
 }
 
 function buildHomeKeyboard(cfg) {
@@ -218,24 +225,22 @@ async function renderHome(cfg) {
   let totalMsgs = 0;
   let todoCount = 0;
   try {
-    const dialogs = await pickDialogs(client, cfg);
+    const dialogs = await pickDialogs(client, cfg, 50);
     todoCount = dialogs.length;
     totalMsgs = dialogs.reduce((acc, curr) => acc + curr.unreadCount, 0);
-  } finally {
-    await client.disconnect();
-  }
+  } catch (e) {}
 
   const activeDays = cfg.days.length === 7 ? "Setiap Hari" : cfg.days.map(i => DAYS[i]).join(", ") || "—";
   const activeCats = Object.keys(cfg.categories).filter(k => cfg.categories[k]).map(k => CAT_LABEL[k].split(" ")[0]).join(" ") || "—";
   const ivStr = cfg.interval_min ? `${cfg.interval_min} Mnt` : "Off";
 
   const text =
-    "⚡ <b>USERBOT INBOX CONTROL v3.1</b>\n" +
+    "⚡ <b>USERBOT INBOX CONTROL v3.2</b>\n" +
     "───────────────────────────\n" +
     "📌 <b>STATUS INBOX SAAT INI</b>\n" +
     `├ 💬 <b>Total Pesan:</b> <code>${fmt(totalMsgs)}</code>\n` +
     `└ 🗨 <b>Chat Pending:</b> <code>${fmt(todoCount)}</code>\n\n` +
-    "⚙️️ <b>KONFIGURASI SISTEM</b>\n" +
+    "⚙ <b>KONFIGURASI SISTEM</b>\n" +
     `├ ⏰ <b>Jadwal:</b> <code>${cfg.schedules.join(", ") || "—"}</code>\n` +
     `├ 🔁 <b>Interval:</b> <code>${ivStr}</code>\n` +
     `├ 📅 <b>Hari:</b> <code>${activeDays}</code>\n` +
@@ -322,11 +327,9 @@ async function renderPreview(cfg) {
   const client = await getClient();
   let todo = [];
   try {
-    todo = await pickDialogs(client, cfg);
+    todo = await pickDialogs(client, cfg, 40);
     todo.sort((a, b) => b.unreadCount - a.unreadCount);
-  } finally {
-    await client.disconnect();
-  }
+  } catch (e) {}
 
   const kb = new InlineKeyboard();
   if (todo.length === 0) {
@@ -571,5 +574,5 @@ module.exports = async (req, res) => {
   }
 
   res.statusCode = 200;
-  res.end("Inbox Control Bot v3.1 (Looping Read All) Active");
+  res.end("Inbox Control Bot v3.2 Turbo Active");
 };
