@@ -1,23 +1,16 @@
 {
-  "name": "walzy-intelligence-bot",
-  "version": "3.0.0",
-  "description": "Walzy Telegram Bot Cek Bio WhatsApp Intelligence Checker",
-  "main": "bot.js",
-  "type": "module",
-  "scripts": {
-    "start": "node bot.js",
-    "dev": "node --watch bot.js"
-  },
-  "dependencies": {
-    "@whiskeysockets/baileys": "^6.6.0",
-    "axios": "^1.6.2",
-    "libphonenumber-js": "^1.11.1",
-    "pino": "^9.3.2",
-    "telegraf": "^4.16.3",
-    "xlsx": "^0.18.5"
-  },
-  "engines": {
-    "node": ">=18.0.0"
-  },
-  "license": "MIT"
+"name": "inbox-control-userbot",
+"version": "2.0.0",
+"description": "Telegram Userbot and Control Panel for Vercel",
+"main": "api/index.js",
+"scripts": {
+"start": "node api/index.js"
+},
+"dependencies": {
+"grammy": "^1.21.1",
+"telegram": "^2.22.2"
+},
+"engines": {
+"node": ">=18.0.0"
+}
 }
