@@ -1,7 +1,7 @@
 {
   "name": "inbox-control-userbot",
-  "version": "2.5.0",
-  "description": "Enterprise-grade Modern Telegram Inbox Control Userbot & Panel Bot for Vercel",
+  "version": "3.0.0",
+  "description": "Symmetrical Owner-Only Telegram Inbox Control Userbot",
   "main": "api/index.js",
   "scripts": {
     "start": "node api/index.js"
