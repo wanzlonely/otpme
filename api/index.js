@@ -2,18 +2,13 @@ const { Bot, InlineKeyboard } = require("grammy");
 const { TelegramClient, Api } = require("telegram");
 const { StringSession } = require("telegram/sessions");
 const { kv } = require("@vercel/kv");
-const crypto = require("crypto");
 
 const API_ID = parseInt(process.env.TG_API_ID || "0", 10);
 const API_HASH = process.env.TG_API_HASH || "";
 const BOT_TOKEN = process.env.BOT_TOKEN || "";
 const TG_SESSION = process.env.TG_SESSION || "";
 const OWNER_ID = parseInt(process.env.OWNER_ID || "0", 10);
-const CRON_SECRET = process.env.CRON_SECRET || "";
 
-const UNLOCK_TTL = 300;
-const MAX_FAILS = 5;
-const BAN_SECONDS = 600;
 const DAYS = ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"];
 const PRESET_TIMES = ["06:00", "08:00", "12:00", "15:00", "18:00", "21:00"];
 const CAT_LABEL = {
@@ -33,13 +28,9 @@ const DEFAULT_CFG = {
   exclude: [],
   paused: false,
   daily_report: true,
-  pin_hash: null,
-  pin_salt: null,
   stats: {},
   last_undo: []
 };
-
-let memAuth = { until: 0, fails: 0, ban: 0 };
 
 async function loadCfg() {
   try {
@@ -63,31 +54,16 @@ async function appendLog(event) {
     const logLine = `${timestamp} | ${event}`;
     let logs = (await kv.get("userbot_logs")) || [];
     logs.push(logLine);
-    if (logs.length > 20) logs = logs.slice(-20);
+    if (logs.length > 15) logs = logs.slice(-15);
     await kv.set("userbot_logs", logs);
   } catch (e) {}
-}
-
-function hashPin(pin, saltHex) {
-  const salt = Buffer.from(saltHex, "hex");
-  return crypto.scryptSync(pin, salt, 64).toString("hex");
-}
-
-function checkPin(cfg, pin) {
-  if (!cfg.pin_hash || !cfg.pin_salt) return false;
-  const hash = hashPin(pin, cfg.pin_salt);
-  return crypto.timingSafeEqual(Buffer.from(hash, "hex"), Buffer.from(cfg.pin_hash, "hex"));
-}
-
-function isUnlocked(cfg) {
-  return Boolean(cfg.pin_hash) && Date.now() / 1000 < memAuth.until;
 }
 
 function fmt(n) {
   return Number(n || 0).toLocaleString("id-ID");
 }
 
-function esc(s, n = 26) {
+function esc(s, n = 24) {
   if (!s) return "";
   const str = s.length <= n ? s : s.substring(0, n - 1) + "…";
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -97,14 +73,6 @@ function spark(vals) {
   const bars = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
   const top = Math.max(...vals, 1);
   return vals.map(v => (v ? bars[Math.min(7, Math.floor((v / top) * 7))] : "▁")).join("");
-}
-
-function chunk(arr, size) {
-  const res = [];
-  for (let i = 0; i < arr.length; i += size) {
-    res.push(arr.slice(i, i + size));
-  }
-  return res;
 }
 
 async function getClient() {
@@ -169,7 +137,7 @@ async function readNow(source) {
         }
         done.push(d.id.toString());
         totalMsgs += d.unreadCount;
-        await new Promise(r => setTimeout(r, 350));
+        await new Promise(r => setTimeout(r, 300));
       } catch (err) {}
     }
 
@@ -180,15 +148,8 @@ async function readNow(source) {
     cfg.stats[today].chats += done.length;
     cfg.stats[today].msgs += totalMsgs;
 
-    const dates = Object.keys(cfg.stats).sort();
-    if (dates.length > 30) {
-      for (const d of dates.slice(0, dates.length - 30)) {
-        delete cfg.stats[d];
-      }
-    }
-
     await saveCfg(cfg);
-    await appendLog(`READ source=${source} chats=${done.length} msgs=${totalMsgs}`);
+    await appendLog(`READ src=${source} chats=${done.length} msgs=${totalMsgs}`);
     return { chats: done.length, msgs: totalMsgs };
   } finally {
     await client.disconnect();
@@ -212,7 +173,7 @@ async function undoLast() {
           })
         );
         count++;
-        await new Promise(r => setTimeout(r, 300));
+        await new Promise(r => setTimeout(r, 250));
       } catch (e) {}
     }
     cfg.last_undo = [];
@@ -226,18 +187,17 @@ async function undoLast() {
 
 function buildHomeKeyboard(cfg) {
   const kb = new InlineKeyboard();
-  kb.text("✅ Baca Semua", "read").text("👁 Pratinjau", "preview").row();
-  kb.text("⏰ Jadwal", "sched").text("🗂 Kategori", "cats").text("📅 Hari", "days").row();
-  kb.text(`🔕 Muted: ${cfg.skip_muted ? "dilewati" : "ikut"}`, "mute")
-    .text(`📦 Archive: ${cfg.auto_archive ? "ON" : "OFF"}`, "archive").row();
-  kb.text(cfg.paused ? "▶️ Lanjutkan" : "⏸ Jeda", "pause")
-    .text("↩️️ Undo", "undo").row();
-  kb.text("📊 Laporan", "rep").text("📜 Log", "log").text("🔒 Kunci", "lock").row();
+  kb.text("⚡ Baca Semua", "read").text("👁 Pratinjau", "preview").row();
+  kb.text("⏰ Atur Jadwal", "sched").text("🗂 Atur Kategori", "cats").row();
+  kb.text("📅 Atur Hari", "days").text(`🔕 Muted: ${cfg.skip_muted ? "Dilewati" : "Ikut"}`, "mute").row();
+  kb.text(`📦 Archive: ${cfg.auto_archive ? "ON" : "OFF"}`, "archive").text(cfg.paused ? "▶️ Lanjutkan" : "⏸ Jeda System", "pause").row();
+  kb.text("📊 Laporan 7 Hari", "rep").text("📜 Log Aktivitas", "log").row();
+  kb.text("↩️ Urungkan (Undo)", "undo").text("🔄 Refresh Panel", "home").row();
   return kb;
 }
 
 function backKeyboard() {
-  return new InlineKeyboard().text("🏠 Menu", "home");
+  return new InlineKeyboard().text("🏠 Kembali Ke Menu Utama", "home");
 }
 
 async function renderHome(cfg) {
@@ -252,23 +212,25 @@ async function renderHome(cfg) {
     await client.disconnect();
   }
 
-  const activeDays = cfg.days.length === 7 ? "Setiap hari" : cfg.days.map(i => DAYS[i]).join(", ") || "—";
+  const activeDays = cfg.days.length === 7 ? "Setiap Hari" : cfg.days.map(i => DAYS[i]).join(", ") || "—";
   const activeCats = Object.keys(cfg.categories).filter(k => cfg.categories[k]).map(k => CAT_LABEL[k].split(" ")[0]).join(" ") || "—";
-  const ivStr = cfg.interval_min ? `${cfg.interval_min} mnt` : "off";
-  const left = Math.max(0, Math.floor(memAuth.until - Date.now() / 1000));
-  const minLeft = Math.floor(left / 60);
-  const secLeft = String(left % 60).padStart(2, "0");
+  const ivStr = cfg.interval_min ? `${cfg.interval_min} Mnt` : "Off";
 
   const text =
-    "<b>📬 Inbox Control v2.5</b>\n" +
-    `<blockquote><b>${fmt(totalMsgs)}</b> pesan belum dibaca\n` +
-    `<b>${fmt(todoCount)}</b> chat menunggu</blockquote>\n` +
-    `⏰ <b>Jadwal</b> · ${cfg.schedules.join(", ") || "—"}\n` +
-    `🔁 <b>Interval</b> · ${ivStr}\n` +
-    `📅 <b>Hari</b> · ${activeDays}\n` +
-    `🗂 <b>Kategori</b> · ${activeCats}\n` +
-    `${cfg.paused ? "⏸ <b>Dijeda</b>" : "🟢 <b>Aktif</b>"}\n\n` +
-    `<i>🔓 Sesi terbuka ${minLeft}:${secLeft}</i>`;
+    "⚡ <b>USERBOT INBOX CONTROL v3.0</b>\n" +
+    "───────────────────────────\n" +
+    "📌 <b>STATUS INBOX SAAT INI</b>\n" +
+    `├ 💬 <b>Total Pesan:</b> <code>${fmt(totalMsgs)}</code>\n` +
+    `└ 🗨 <b>Chat Pending:</b> <code>${fmt(todoCount)}</code>\n\n` +
+    "⚙️ <b>KONFIGURASI SISTEM</b>\n" +
+    `├ ⏰ <b>Jadwal:</b> <code>${cfg.schedules.join(", ") || "—"}</code>\n` +
+    `├ 🔁 <b>Interval:</b> <code>${ivStr}</code>\n` +
+    `├ 📅 <b>Hari:</b> <code>${activeDays}</code>\n` +
+    `├ 🗂 <b>Kategori:</b> ${activeCats}\n` +
+    `├ 🔕 <b>Muted Chat:</b> <code>${cfg.skip_muted ? "Dilewati" : "Ikut"}</code>\n` +
+    `├ 📦 <b>Auto Archive:</b> <code>${cfg.auto_archive ? "ON" : "OFF"}</code>\n` +
+    `└ 🚀 <b>Status Bot:</b> ${cfg.paused ? "⏸ <b>Dijeda</b>" : "🟢 <b>Aktif</b>"}\n` +
+    "───────────────────────────";
 
   return { text, reply_markup: buildHomeKeyboard(cfg) };
 }
@@ -276,64 +238,69 @@ async function renderHome(cfg) {
 function renderSched(cfg) {
   const kb = new InlineKeyboard();
 
-  const timeBtns = PRESET_TIMES.map(t => ({
-    text: (cfg.schedules.includes(t) ? "✅ " : "▫️ ") + t,
-    callback_data: `t:${t}`
-  }));
-  chunk(timeBtns, 3).forEach(row => {
-    row.forEach(b => kb.text(b.text, b.callback_data));
+  for (let i = 0; i < PRESET_TIMES.length; i += 2) {
+    const t1 = PRESET_TIMES[i];
+    const t2 = PRESET_TIMES[i + 1];
+    kb.text((cfg.schedules.includes(t1) ? "✅ " : "▫️ ") + t1, `t:${t1}`);
+    if (t2) kb.text((cfg.schedules.includes(t2) ? "✅ " : "▫️ ") + t2, `t:${t2}`);
     kb.row();
-  });
+  }
 
   const ivs = [
     { label: "Off", val: 0 },
     { label: "15m", val: 15 },
     { label: "30m", val: 30 },
-    { label: "1j", val: 60 },
-    { label: "3j", val: 180 }
+    { label: "1j", val: 60 }
   ];
   ivs.forEach(item => {
     const mark = cfg.interval_min === item.val ? "🔘 " : "";
     kb.text(`${mark}${item.label}`, `iv:${item.val}`);
   });
   kb.row();
-  kb.text("🏠 Menu", "home");
+  kb.text("🏠 Kembali Ke Menu Utama", "home");
 
   const text =
-    "<b>⏰ Jadwal Otomatis</b>\n" +
-    "<blockquote>Ketuk jam untuk menambah/menghapus.\n" +
-    "Jam khusus: kirim <code>/jam 07:45</code></blockquote>\n" +
-    `Aktif: <b>${cfg.schedules.sort().join(", ") || "—"}</b>`;
+    "⏰ <b>PENGATURAN JADWAL OTOMATIS</b>\n" +
+    "───────────────────────────\n" +
+    "Pilih waktu jam atau interval di bawah.\n" +
+    "Tambah jam khusus: <code>/jam 07:45</code>\n\n" +
+    `Aktif Saat Ini: <b>${cfg.schedules.sort().join(", ") || "—"}</b>\n` +
+    "───────────────────────────";
 
   return { text, reply_markup: kb };
 }
 
 function renderDays(cfg) {
   const kb = new InlineKeyboard();
-  DAYS.forEach((n, i) => {
-    const active = cfg.days.includes(i);
-    kb.text((active ? "✅ " : "▫️ ") + n, `d:${i}`);
-    if (i === 3 || i === 6) kb.row();
-  });
-  kb.text("🏠 Menu", "home");
+  for (let i = 0; i < DAYS.length; i += 2) {
+    const d1 = DAYS[i];
+    const d2 = DAYS[i + 1];
+    kb.text((cfg.days.includes(i) ? "✅ " : "▫️ ") + d1, `d:${i}`);
+    if (d2) kb.text((cfg.days.includes(i + 1) ? "✅ " : "▫️ ") + d2, `d:${i + 1}`);
+    kb.row();
+  }
+  kb.text("🏠 Kembali Ke Menu Utama", "home");
 
   return {
-    text: "<b>📅 Hari Aktif</b>\n<blockquote>Jadwal hanya berjalan di hari terpilih.</blockquote>",
+    text: "📅 <b>PENGATURAN HARI AKTIF</b>\n───────────────────────────\nKetuk hari untuk mengaktifkan atau menonaktifkan pemrosesan otomatis.",
     reply_markup: kb
   };
 }
 
 function renderCats(cfg) {
   const kb = new InlineKeyboard();
-  Object.keys(CAT_LABEL).forEach((k, idx) => {
-    const active = cfg.categories[k];
-    kb.text((active ? "✅ " : "▫️ ") + CAT_LABEL[k], `c:${k}`);
-    if (idx % 2 === 1) kb.row();
-  });
-  kb.text("🏠 Menu", "home");
+  const keys = Object.keys(CAT_LABEL);
+  for (let i = 0; i < keys.length; i += 2) {
+    const k1 = keys[i];
+    const k2 = keys[i + 1];
+    kb.text((cfg.categories[k1] ? "✅ " : "▫️ ") + CAT_LABEL[k1], `c:${k1}`);
+    if (k2) kb.text((cfg.categories[k2] ? "✅ " : "▫️ ") + CAT_LABEL[k2], `c:${k2}`);
+    kb.row();
+  }
+  kb.text("🏠 Kembali Ke Menu Utama", "home");
 
   return {
-    text: "<b>🗂 Kategori</b>\n<blockquote>Hanya kategori terpilih yang akan diproses.</blockquote>",
+    text: "🗂 <b>PENGATURAN KATEGORI CHAT</b>\n───────────────────────────\nHanya kategori dengan tanda centang (✅) yang akan dibaca.",
     reply_markup: kb
   };
 }
@@ -350,17 +317,17 @@ async function renderPreview(cfg) {
 
   const kb = new InlineKeyboard();
   if (todo.length === 0) {
-    kb.text("🏠 Menu", "home");
-    return { text: "<b>👁 Pratinjau</b>\nSemua inbox sudah bersih! 🎉", reply_markup: kb };
+    kb.text("🏠 Kembali Ke Menu Utama", "home");
+    return { text: "👁 <b>PRATINJAU INBOX</b>\n───────────────────────────\n✨ Semua inbox kamu sudah bersih sempurna!", reply_markup: kb };
   }
 
-  const lines = todo.slice(0, 10).map(d => `${String(d.unreadCount).padStart(6, " ")}  ${esc(d.name)}`);
+  const lines = todo.slice(0, 10).map(d => `${String(d.unreadCount).padStart(5, " ")}  ${esc(d.name)}`);
   const more = todo.length > 10 ? `\n… dan ${todo.length - 10} chat lainnya` : "";
 
-  kb.text("✅ Baca Sekarang", "read").row().text("🏠 Menu", "home");
+  kb.text("⚡ Baca Sekarang", "read").row().text("🏠 Kembali Ke Menu Utama", "home");
 
   return {
-    text: `<b>👁 Pratinjau</b> · ${todo.length} chat\n<pre>` + lines.join("\n") + `</pre>${more}`,
+    text: `👁 <b>PRATINJAU INBOX</b> (${todo.length} Chat Pending)\n───────────────────────────\n<pre>` + lines.join("\n") + `</pre>${more}`,
     reply_markup: kb
   };
 }
@@ -383,38 +350,27 @@ function renderReport(cfg) {
   const labels = dates.map(d => DAYS[new Date(d).getDay() === 0 ? 6 : new Date(d).getDay() - 1][0]).join(" ");
 
   const kb = new InlineKeyboard()
-    .text(`🗓 Laporan harian 21:00: ${cfg.daily_report ? "ON" : "OFF"}`, "repT").row()
-    .text("🏠 Menu", "home");
+    .text(`🗓 Laporan Harian 21:00: ${cfg.daily_report ? "ON" : "OFF"}`, "repT").row()
+    .text("🏠 Kembali Ke Menu Utama", "home");
 
   const text =
-    "<b>📊 Laporan 7 Hari</b>\n" +
-    `<pre>${spark(vals)}\n${labels}</pre>\n` +
-    `💬 <b>${fmt(totalMsgs)}</b> pesan · ` +
-    `🗨 <b>${fmt(totalChats)}</b> chat · ` +
-    `▶️ <b>${totalRuns}</b> proses`;
+    "📊 <b>LAPORAN PEMBACAAN 7 HARI</b>\n" +
+    "───────────────────────────\n" +
+    `<pre>${spark(vals)}\n${labels}</pre>\n\n` +
+    `💬 <b>Total Pesan:</b> <code>${fmt(totalMsgs)}</code>\n` +
+    `🗨 <b>Total Chat:</b> <code>${fmt(totalChats)}</code>\n` +
+    `▶️ <b>Total Eksekusi:</b> <code>${totalRuns} kali</code>\n` +
+    "───────────────────────────";
 
   return { text, reply_markup: kb };
 }
 
 async function renderLog() {
   const logs = (await kv.get("userbot_logs")) || [];
-  const body = logs.length > 0 ? logs.map(l => esc(l.substring(5))).join("\n") : "Belum ada aktivitas";
+  const body = logs.length > 0 ? logs.map(l => esc(l.substring(5))).join("\n") : "Belum ada catatan aktivitas";
   return {
-    text: `<b>📜 Log Aktivitas</b>\n<pre>${body}</pre>`,
+    text: `📜 <b>LOG AKTIVITAS TERAKHIR</b>\n───────────────────────────\n<pre>${body}</pre>`,
     reply_markup: backKeyboard()
-  };
-}
-
-function lockScreen(cfg) {
-  if (!cfg.pin_hash) {
-    return {
-      text: "<b>🔐 Atur PIN Terlebih Dahulu</b>\n<blockquote>Kirim <code>/setpin 123456</code>\nPesan PIN akan langsung dihapus demi keamanan.</blockquote>",
-      reply_markup: null
-    };
-  }
-  return {
-    text: "<b>🔒 Terkunci</b>\n<blockquote>Kirim <code>/unlock PIN</code> untuk mengakses kontrol panel.</blockquote>",
-    reply_markup: null
   };
 }
 
@@ -492,9 +448,9 @@ async function routeAction(act, cfg) {
 
   if (kind === "read") {
     const res = await readNow("manual");
-    const kb = new InlineKeyboard().text("↩️ Undo", "undo").text("🏠 Menu", "home");
+    const kb = new InlineKeyboard().text("↩️ Urungkan (Undo)", "undo").text("🏠 Menu Utama", "home");
     return {
-      text: `<b>✅ Selesai</b>\n<blockquote><b>${fmt(res.msgs)}</b> pesan dari <b>${res.chats}</b> chat telah ditandai terbaca.</blockquote>`,
+      text: `✅ <b>PEMBACAAN SELESAI</b>\n───────────────────────────\nBerhasil menandai <b>${fmt(res.msgs)}</b> pesan di <b>${res.chats}</b> chat sebagai terbaca.`,
       reply_markup: kb
     };
   }
@@ -502,14 +458,9 @@ async function routeAction(act, cfg) {
   if (kind === "undo") {
     const count = await undoLast();
     return {
-      text: `<b>↩️ Dikembalikan</b>\n<blockquote><b>${count}</b> chat ditandai belum dibaca kembali.</blockquote>`,
+      text: `↩️ <b>PEMBATALAN SELESAI</b>\n───────────────────────────\nSebanyak <b>${count}</b> chat telah ditandai belum dibaca kembali.`,
       reply_markup: backKeyboard()
     };
-  }
-
-  if (kind === "lock") {
-    memAuth.until = 0;
-    return lockScreen(cfg);
   }
 
   return renderHome(cfg);
@@ -517,14 +468,8 @@ async function routeAction(act, cfg) {
 
 const bot = new Bot(BOT_TOKEN);
 
-async function safeDelete(ctx) {
-  try {
-    await ctx.deleteMessage();
-  } catch (e) {}
-}
-
 bot.on("message", async (ctx) => {
-  if (ctx.chat.type !== "private" || ctx.from.id !== OWNER_ID) return;
+  if (ctx.from.id !== OWNER_ID) return;
 
   const text = (ctx.message.text || "").trim();
   const parts = text.split(/\s+/);
@@ -533,69 +478,9 @@ bot.on("message", async (ctx) => {
 
   const cfg = await loadCfg();
 
-  if (cmd === "/setpin") {
-    await safeDelete(ctx);
-    let newPin = "";
-    if (cfg.pin_hash) {
-      if (args.length !== 2 || !checkPin(cfg, args[0])) {
-        return ctx.reply("❌ Format: <code>/setpin PIN_LAMA PIN_BARU</code>", { parse_mode: "HTML" });
-      }
-      newPin = args[1];
-    } else {
-      newPin = args[0] || "";
-    }
-
-    if (!/^\d{4,12}$/.test(newPin)) {
-      return ctx.reply("❌ PIN harus berupa 4–12 digit angka.");
-    }
-
-    const salt = crypto.randomBytes(16).toString("hex");
-    cfg.pin_salt = salt;
-    cfg.pin_hash = hashPin(newPin, salt);
-    await saveCfg(cfg);
-
-    memAuth.until = Date.now() / 1000 + UNLOCK_TTL;
-    await appendLog("PIN set");
-
-    const screen = await renderHome(cfg);
-    return ctx.reply("✅ PIN berhasil disimpan.\n\n" + screen.text, {
-      reply_markup: screen.reply_markup,
-      parse_mode: "HTML"
-    });
-  }
-
-  if (cmd === "/unlock") {
-    await safeDelete(ctx);
-    if (Date.now() / 1000 < memAuth.ban) {
-      const waitMin = Math.ceil((memAuth.ban - Date.now() / 1000) / 60);
-      return ctx.reply(`⛔ Terlalu banyak percobaan gagal. Coba lagi ${waitMin} menit lagi.`);
-    }
-
-    if (args[0] && checkPin(cfg, args[0])) {
-      memAuth.until = Date.now() / 1000 + UNLOCK_TTL;
-      memAuth.fails = 0;
-      await appendLog("UNLOCK ok");
-      const screen = await renderHome(cfg);
-      return ctx.reply(screen.text, { reply_markup: screen.reply_markup, parse_mode: "HTML" });
-    }
-
-    memAuth.fails += 1;
-    await appendLog("UNLOCK gagal");
-    if (memAuth.fails >= MAX_FAILS) {
-      memAuth.ban = Date.now() / 1000 + BAN_SECONDS;
-      memAuth.fails = 0;
-    }
-    return ctx.reply("❌ PIN salah.");
-  }
-
-  if (!isUnlocked(cfg)) {
-    const screen = lockScreen(cfg);
-    return ctx.reply(screen.text, { parse_mode: "HTML" });
-  }
-
   if (cmd === "/jam" && args[0]) {
     if (!/^\d{2}:\d{2}$/.test(args[0])) {
-      return ctx.reply("Format: <code>/jam 07:45</code>", { parse_mode: "HTML" });
+      return ctx.reply("Format jam salah! Gunakan: <code>/jam 07:45</code>", { parse_mode: "HTML" });
     }
     if (cfg.schedules.includes(args[0])) {
       cfg.schedules = cfg.schedules.filter(x => x !== args[0]);
@@ -612,10 +497,10 @@ bot.on("message", async (ctx) => {
     const idStr = args[0];
     if (cfg.exclude.includes(idStr)) {
       cfg.exclude = cfg.exclude.filter(x => x !== idStr);
-      await ctx.reply(`Daftar exclude dihapus untuk ID: ${idStr}`);
+      await ctx.reply(`ID <code>${idStr}</code> dihapus dari daftar pengecualian.`, { parse_mode: "HTML" });
     } else {
       cfg.exclude.push(idStr);
-      await ctx.reply(`Daftar exclude ditambahkan untuk ID: ${idStr}`);
+      await ctx.reply(`ID <code>${idStr}</code> ditambahkan ke daftar pengecualian.`, { parse_mode: "HTML" });
     }
     await saveCfg(cfg);
     return;
@@ -624,7 +509,7 @@ bot.on("message", async (ctx) => {
   if (cmd === "/resetstats") {
     cfg.stats = {};
     await saveCfg(cfg);
-    return ctx.reply("✅ Statistik berhasil direset.");
+    return ctx.reply("✅ Data statistik berhasil dibersihkan.");
   }
 
   const screen = await renderHome(cfg);
@@ -637,17 +522,12 @@ bot.on("callback_query:data", async (ctx) => {
   }
 
   const cfg = await loadCfg();
-  if (!isUnlocked(cfg)) {
-    return ctx.answerCallbackQuery({ text: "🔒 Kirim /unlock PIN terlebih dahulu", alert: true });
-  }
-
-  memAuth.until = Date.now() / 1000 + UNLOCK_TTL;
   await ctx.answerCallbackQuery();
 
   const act = ctx.callbackQuery.data;
   try {
     if (act === "read") {
-      await ctx.editMessageText("⏳ <b>Membaca semua chat…</b>", { parse_mode: "HTML" });
+      await ctx.editMessageText("⏳ <b>Sedang memproses pembacaan inbox…</b>", { parse_mode: "HTML" });
     }
     const screen = await routeAction(act, cfg);
     await ctx.editMessageText(screen.text, {
@@ -657,83 +537,7 @@ bot.on("callback_query:data", async (ctx) => {
   } catch (e) {}
 });
 
-async function runCronJob() {
-  const cfg = await loadCfg();
-  if (cfg.paused) return { status: "paused" };
-
-  const now = new Date();
-  const dayIndex = now.getDay() === 0 ? 6 : now.getDay() - 1;
-  if (!cfg.days.includes(dayIndex)) return { status: "day_skipped" };
-
-  const hh = String(now.getHours()).padStart(2, "0");
-  const mm = String(now.getMinutes()).padStart(2, "0");
-  const currentTime = `${hh}:${mm}`;
-
-  const lastRunKey = await kv.get("userbot_last_cron_run");
-  const todayStr = now.toISOString().split("T")[0];
-  const currentKey = `${todayStr}_${currentTime}`;
-
-  let shouldRun = false;
-  if (cfg.schedules.includes(currentTime) && lastRunKey !== currentKey) {
-    shouldRun = true;
-    await kv.set("userbot_last_cron_run", currentKey);
-  }
-
-  if (!shouldRun && cfg.interval_min > 0) {
-    const lastIvRun = (await kv.get("userbot_last_iv_run")) || 0;
-    const nowTs = Math.floor(Date.now() / 1000);
-    if (nowTs - lastIvRun >= cfg.interval_min * 60) {
-      shouldRun = true;
-      await kv.set("userbot_last_iv_run", nowTs);
-    }
-  }
-
-  if (shouldRun) {
-    const res = await readNow("cron");
-    if (res.chats > 0) {
-      const kb = new InlineKeyboard().text("↩️ Undo", "undo").text("🏠 Menu", "home");
-      await bot.api.sendMessage(
-        OWNER_ID,
-        `<b>⏰ Terjadwal Otomatis</b>\n✅ <b>${fmt(res.msgs)}</b> pesan dari <b>${res.chats}</b> chat telah ditandai terbaca.`,
-        { parse_mode: "HTML", reply_markup: kb }
-      );
-    }
-    return { status: "executed", ...res };
-  }
-
-  if (cfg.daily_report && currentTime === "21:00") {
-    const lastReportDate = await kv.get("userbot_last_report_date");
-    if (lastReportDate !== todayStr) {
-      await kv.set("userbot_last_report_date", todayStr);
-      const rep = renderReport(cfg);
-      await bot.api.sendMessage(OWNER_ID, rep.text, { parse_mode: "HTML" });
-    }
-  }
-
-  return { status: "idle" };
-}
-
 module.exports = async (req, res) => {
-  const url = new URL(req.url, `http://${req.headers.host}`);
-
-  if (url.pathname === "/api/cron" || url.searchParams.get("action") === "cron") {
-    if (CRON_SECRET) {
-      const authHeader = req.headers["authorization"];
-      if (authHeader !== `Bearer ${CRON_SECRET}` && url.searchParams.get("secret") !== CRON_SECRET) {
-        res.statusCode = 401;
-        return res.end("Unauthorized Cron Trigger");
-      }
-    }
-    try {
-      const result = await runCronJob();
-      res.statusCode = 200;
-      return res.json({ success: true, result });
-    } catch (err) {
-      res.statusCode = 500;
-      return res.json({ success: false, error: err.message });
-    }
-  }
-
   if (req.method === "POST") {
     try {
       await bot.init();
@@ -747,5 +551,5 @@ module.exports = async (req, res) => {
   }
 
   res.statusCode = 200;
-  res.end("Inbox Control Bot v2.5 Online");
+  res.end("Inbox Control Bot v3.0 (Owner Only - No Cron - No PIN) Active");
 };
