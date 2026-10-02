@@ -63,7 +63,7 @@ function fmt(n) {
   return Number(n || 0).toLocaleString("id-ID");
 }
 
-function esc(s, n = 24) {
+function esc(s, n = 22) {
   if (!s) return "";
   const str = s.length <= n ? s : s.substring(0, n - 1) + "…";
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -117,40 +117,53 @@ async function readNow(source) {
   const client = await getClient();
   const done = [];
   let totalMsgs = 0;
+  let totalChatsProcessed = 0;
 
   try {
-    const dialogs = await pickDialogs(client, cfg);
-    for (const d of dialogs) {
-      try {
-        await client.markAsRead(d.entity);
-        if (cfg.auto_archive && !d.archived) {
-          await client.invoke(
-            new Api.folders.EditPeerFolders({
-              folderPeers: [
-                new Api.InputFolderPeer({
-                  peer: d.inputEntity,
-                  folderId: 1
-                })
-              ]
-            })
-          );
-        }
-        done.push(d.id.toString());
-        totalMsgs += d.unreadCount;
-        await new Promise(r => setTimeout(r, 300));
-      } catch (err) {}
+    let hasUnread = true;
+    let maxLoops = 15; // Keamanan agar tidak infinite loop
+
+    while (hasUnread && maxLoops > 0) {
+      maxLoops--;
+      const dialogs = await pickDialogs(client, cfg);
+      if (dialogs.length === 0) {
+        hasUnread = false;
+        break;
+      }
+
+      for (const d of dialogs) {
+        try {
+          await client.markAsRead(d.entity);
+          if (cfg.auto_archive && !d.archived) {
+            await client.invoke(
+              new Api.folders.EditPeerFolders({
+                folderPeers: [
+                  new Api.InputFolderPeer({
+                    peer: d.inputEntity,
+                    folderId: 1
+                  })
+                ]
+              })
+            );
+          }
+          done.push(d.id.toString());
+          totalMsgs += d.unreadCount;
+          totalChatsProcessed++;
+          await new Promise(r => setTimeout(r, 200));
+        } catch (err) {}
+      }
     }
 
     cfg.last_undo = done;
     const today = new Date().toISOString().split("T")[0];
     if (!cfg.stats[today]) cfg.stats[today] = { runs: 0, chats: 0, msgs: 0 };
     cfg.stats[today].runs += 1;
-    cfg.stats[today].chats += done.length;
+    cfg.stats[today].chats += totalChatsProcessed;
     cfg.stats[today].msgs += totalMsgs;
 
     await saveCfg(cfg);
-    await appendLog(`READ src=${source} chats=${done.length} msgs=${totalMsgs}`);
-    return { chats: done.length, msgs: totalMsgs };
+    await appendLog(`READ src=${source} chats=${totalChatsProcessed} msgs=${totalMsgs}`);
+    return { chats: totalChatsProcessed, msgs: totalMsgs };
   } finally {
     await client.disconnect();
   }
@@ -173,7 +186,7 @@ async function undoLast() {
           })
         );
         count++;
-        await new Promise(r => setTimeout(r, 250));
+        await new Promise(r => setTimeout(r, 200));
       } catch (e) {}
     }
     cfg.last_undo = [];
@@ -217,12 +230,12 @@ async function renderHome(cfg) {
   const ivStr = cfg.interval_min ? `${cfg.interval_min} Mnt` : "Off";
 
   const text =
-    "⚡ <b>USERBOT INBOX CONTROL v3.0</b>\n" +
+    "⚡ <b>USERBOT INBOX CONTROL v3.1</b>\n" +
     "───────────────────────────\n" +
     "📌 <b>STATUS INBOX SAAT INI</b>\n" +
     `├ 💬 <b>Total Pesan:</b> <code>${fmt(totalMsgs)}</code>\n` +
     `└ 🗨 <b>Chat Pending:</b> <code>${fmt(todoCount)}</code>\n\n` +
-    "⚙️ <b>KONFIGURASI SISTEM</b>\n" +
+    "⚙️️ <b>KONFIGURASI SISTEM</b>\n" +
     `├ ⏰ <b>Jadwal:</b> <code>${cfg.schedules.join(", ") || "—"}</code>\n` +
     `├ 🔁 <b>Interval:</b> <code>${ivStr}</code>\n` +
     `├ 📅 <b>Hari:</b> <code>${activeDays}</code>\n` +
@@ -318,18 +331,25 @@ async function renderPreview(cfg) {
   const kb = new InlineKeyboard();
   if (todo.length === 0) {
     kb.text("🏠 Kembali Ke Menu Utama", "home");
-    return { text: "👁 <b>PRATINJAU INBOX</b>\n───────────────────────────\n✨ Semua inbox kamu sudah bersih sempurna!", reply_markup: kb };
+    return { text: "✨ <b>INBOX SUDAH BERSIH</b>\n───────────────────────────\nTidak ada pesan tertunda saat ini.", reply_markup: kb };
   }
 
-  const lines = todo.slice(0, 10).map(d => `${String(d.unreadCount).padStart(5, " ")}  ${esc(d.name)}`);
-  const more = todo.length > 10 ? `\n… dan ${todo.length - 10} chat lainnya` : "";
+  let summaryText = "👁 <b>RINGKASAN UNREAD INBOX</b>\n───────────────────────────\n";
+  summaryText += `📊 <b>Total Terdeteksi:</b> <code>${fmt(todo.length)} Chat Pending</code>\n\n`;
+  summaryText += "<b>Top 5 Chat Pesan Terbanyak:</b>\n";
 
-  kb.text("⚡ Baca Sekarang", "read").row().text("🏠 Kembali Ke Menu Utama", "home");
+  todo.slice(0, 5).forEach((d, idx) => {
+    summaryText += `├ <b>${idx + 1}.</b> ${esc(d.name)} — <code>${fmt(d.unreadCount)} Pesan</code>\n`;
+  });
 
-  return {
-    text: `👁 <b>PRATINJAU INBOX</b> (${todo.length} Chat Pending)\n───────────────────────────\n<pre>` + lines.join("\n") + `</pre>${more}`,
-    reply_markup: kb
-  };
+  if (todo.length > 5) {
+    summaryText += `└ <i>…dan ${todo.length - 5} chat lainnya siap dibersihkan.</i>\n`;
+  }
+  summaryText += "───────────────────────────";
+
+  kb.text("⚡ Baca Semua Sampai Selesai", "read").row().text("🏠 Kembali Ke Menu Utama", "home");
+
+  return { text: summaryText, reply_markup: kb };
 }
 
 function renderReport(cfg) {
@@ -450,7 +470,7 @@ async function routeAction(act, cfg) {
     const res = await readNow("manual");
     const kb = new InlineKeyboard().text("↩️ Urungkan (Undo)", "undo").text("🏠 Menu Utama", "home");
     return {
-      text: `✅ <b>PEMBACAAN SELESAI</b>\n───────────────────────────\nBerhasil menandai <b>${fmt(res.msgs)}</b> pesan di <b>${res.chats}</b> chat sebagai terbaca.`,
+      text: `✅ <b>PEMBACAAN SELESAI SAMPAI TUNTAS</b>\n───────────────────────────\nBerhasil membersihkan total <b>${fmt(res.msgs)}</b> pesan di <b>${fmt(res.chats)}</b> chat.`,
       reply_markup: kb
     };
   }
@@ -527,7 +547,7 @@ bot.on("callback_query:data", async (ctx) => {
   const act = ctx.callbackQuery.data;
   try {
     if (act === "read") {
-      await ctx.editMessageText("⏳ <b>Sedang memproses pembacaan inbox…</b>", { parse_mode: "HTML" });
+      await ctx.editMessageText("⏳ <b>Sedang membersihkan seluruh pesan belum dibaca...</b>", { parse_mode: "HTML" });
     }
     const screen = await routeAction(act, cfg);
     await ctx.editMessageText(screen.text, {
@@ -551,5 +571,5 @@ module.exports = async (req, res) => {
   }
 
   res.statusCode = 200;
-  res.end("Inbox Control Bot v3.0 (Owner Only - No Cron - No PIN) Active");
+  res.end("Inbox Control Bot v3.1 (Looping Read All) Active");
 };
